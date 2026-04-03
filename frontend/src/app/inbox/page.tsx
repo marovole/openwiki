@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { api, type Material } from "@/lib/api";
 
 // ============================================================
@@ -48,7 +48,39 @@ export default function InboxPage() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // 加载已有 materials
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadMaterials() {
+      try {
+        const result = await api.listMaterials({ limit: 50 });
+        if (mounted) {
+          setMaterials(result.items);
+        }
+      } catch (err) {
+        // 静默失败，首次加载失败不阻塞用户操作
+        console.error("Failed to load materials:", err);
+      } finally {
+        if (mounted) {
+          setInitialLoading(false);
+        }
+      }
+    }
+
+    loadMaterials();
+
+    // 每 30 秒刷新一次状态（编译中的 material 可能状态变更）
+    const interval = setInterval(loadMaterials, 30000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const handleIngest = useCallback(async () => {
     if (!url.trim()) return;
@@ -142,7 +174,11 @@ export default function InboxPage() {
 
       {/* Materials List */}
       <div className="space-y-3">
-        {materials.length === 0 ? (
+        {initialLoading ? (
+          <div className="text-center py-12 text-zinc-500">
+            <p>Loading...</p>
+          </div>
+        ) : materials.length === 0 ? (
           <div className="text-center py-12 text-zinc-500">
             <p>No materials yet</p>
             <p className="text-sm mt-1">Add a URL or upload a file to get started</p>

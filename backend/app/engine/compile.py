@@ -45,6 +45,75 @@ client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 
 # ============================================================
+# JSON Extraction Helper
+# ============================================================
+
+def _extract_json(text: str) -> str:
+    """
+    从 LLM 响应中提取 JSON 对象。
+
+    处理以下格式：
+    1. 纯 JSON: {"key": "value"}
+    2. Markdown 代码块: ```json\\n{...}\\n```
+    3. 混合文本中的 JSON
+
+    Args:
+        text: LLM 响应文本
+
+    Returns:
+        提取的 JSON 字符串
+
+    Raises:
+        ValueError: 未找到有效 JSON
+    """
+    import re
+
+    text = text.strip()
+
+    # 1. 尝试从 markdown 代码块提取
+    code_block_pattern = r"```(?:json)?\s*\n?([\s\S]*?)\n?```"
+    match = re.search(code_block_pattern, text)
+    if match:
+        return match.group(1).strip()
+
+    # 2. 使用括号匹配算法提取最外层 JSON 对象
+    # 找到第一个 { 的位置
+    start = text.find("{")
+    if start == -1:
+        raise ValueError(f"No JSON object found in response: {text[:200]}")
+
+    # 从 start 开始，找到匹配的 }
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i, char in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+
+        if char == "\\":
+            escape_next = True
+            continue
+
+        if char == '"' and not escape_next:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+
+    raise ValueError(f"Unmatched braces in JSON: {text[:200]}")
+
+
+# ============================================================
 # Compile Prompt
 # ============================================================
 
@@ -130,29 +199,10 @@ async def compile_material(
     )
 
     # Extract text from response
-    text = response.content[0].text
+    text = response.content[0].text.strip()
 
     # Parse JSON from response (handle potential markdown code blocks)
-    # Claude sometimes wraps JSON in ```json ... ```
-    text = text.strip()
-    if text.startswith("```"):
-        # Remove code block markers
-        lines = text.split("\n")
-        # Remove first line (```json or ```)
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        # Remove last line (```)
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
-
-    # Find JSON object boundaries
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start == -1 or end == 0:
-        raise ValueError(f"No JSON object found in response: {text[:200]}")
-
-    json_str = text[start:end]
+    json_str = _extract_json(text)
 
     try:
         result = json.loads(json_str)

@@ -4,10 +4,11 @@
 # URL ingestion and file upload endpoints
 # ============================================================
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc
 from pydantic import BaseModel, HttpUrl
-from typing import Optional
+from typing import Optional, List
 
 from app.db import get_db, SessionLocal
 from app.models.material import Material, MaterialStatus
@@ -175,4 +176,66 @@ async def ingest_upload(
         status=material.status.value,
         source_url=material.source_url,
         file_key=material.file_key,
+    )
+
+
+# ============================================================
+# List Materials Endpoint
+# ============================================================
+
+class MaterialListResponse(BaseModel):
+    """Response model for material list."""
+    items: List[MaterialResponse]
+    total: int
+
+
+@router.get("/materials", response_model=MaterialListResponse)
+async def list_materials(
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    status: Optional[str] = Query(None, pattern="^(pending|compiling|compiled|failed)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all materials with optional filtering.
+
+    Args:
+        limit: Max results (1-100)
+        offset: Pagination offset
+        status: Filter by status (optional)
+        db: Database session
+
+    Returns:
+        Paginated list of materials
+    """
+    query = select(Material).order_by(desc(Material.created_at))
+
+    if status:
+        query = query.where(Material.status == MaterialStatus(status))
+
+    # Count total
+    count_query = select(Material)
+    if status:
+        count_query = count_query.where(Material.status == MaterialStatus(status))
+
+    total_result = await db.execute(count_query)
+    total = len(total_result.scalars().all())
+
+    # Get paginated results
+    query = query.limit(limit).offset(offset)
+    result = await db.execute(query)
+    materials = result.scalars().all()
+
+    return MaterialListResponse(
+        items=[
+            MaterialResponse(
+                id=m.id,
+                title=m.title,
+                status=m.status.value,
+                source_url=m.source_url,
+                file_key=m.file_key,
+            )
+            for m in materials
+        ],
+        total=total,
     )

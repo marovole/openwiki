@@ -117,3 +117,116 @@ class TestIngestAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["title"] == "my-note.md"
+
+
+class TestListMaterialsAPI:
+    """Test GET /ingest/materials endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_list_materials_empty(self, api_client):
+        """Test listing materials when empty."""
+        resp = await api_client.get("/ingest/materials")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["items"] == []
+        assert data["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_materials_with_data(self, api_client):
+        """Test listing materials with data."""
+        # Create some materials via API
+        mock_html = """
+        <html>
+            <head><title>Article 1</title></head>
+            <body><article><h1>Content 1</h1></article></body>
+        </html>
+        """
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_response = AsyncMock()
+            mock_response.text = mock_html
+            mock_response.raise_for_status = lambda: None
+            mock_instance.get = AsyncMock(return_value=mock_response)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_client.return_value = mock_instance
+
+            await api_client.post("/ingest/url", json={"url": "https://example.com/1"})
+
+        # List materials
+        resp = await api_client.get("/ingest/materials")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["items"]) >= 1
+        assert data["total"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_list_materials_pagination(self, api_client):
+        """Test pagination parameters."""
+        mock_html = """
+        <html>
+            <head><title>Test</title></head>
+            <body><article><h1>Test</h1></article></body>
+        </html>
+        """
+
+        # Create multiple materials
+        for i in range(3):
+            with patch("httpx.AsyncClient") as mock_client:
+                mock_instance = AsyncMock()
+                mock_response = AsyncMock()
+                mock_response.text = mock_html
+                mock_response.raise_for_status = lambda: None
+                mock_instance.get = AsyncMock(return_value=mock_response)
+                mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+                mock_instance.__aexit__ = AsyncMock(return_value=None)
+                mock_client.return_value = mock_instance
+
+                await api_client.post(
+                    "/ingest/url",
+                    json={"url": f"https://example.com/page{i}"},
+                )
+
+        # Test limit
+        resp = await api_client.get("/ingest/materials?limit=2")
+        assert len(resp.json()["items"]) == 2
+
+        # Test offset
+        resp1 = await api_client.get("/ingest/materials?limit=1&offset=0")
+        resp2 = await api_client.get("/ingest/materials?limit=1&offset=1")
+        assert resp1.json()["items"][0]["id"] != resp2.json()["items"][0]["id"]
+
+    @pytest.mark.asyncio
+    async def test_list_materials_filter_by_status(self, api_client):
+        """Test filtering by status."""
+        mock_html = """
+        <html>
+            <head><title>Status Test</title></head>
+            <body><article><h1>Test</h1></article></body>
+        </html>
+        """
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_response = AsyncMock()
+            mock_response.text = mock_html
+            mock_response.raise_for_status = lambda: None
+            mock_instance.get = AsyncMock(return_value=mock_response)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_client.return_value = mock_instance
+
+            await api_client.post("/ingest/url", json={"url": "https://example.com/status"})
+
+        # Filter by pending status
+        resp = await api_client.get("/ingest/materials?status=pending")
+        assert resp.status_code == 200
+        for item in resp.json()["items"]:
+            assert item["status"] == "pending"
+
+        # Invalid status should be rejected
+        resp = await api_client.get("/ingest/materials?status=invalid")
+        assert resp.status_code == 422  # Validation error

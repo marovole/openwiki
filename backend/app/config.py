@@ -5,6 +5,7 @@
 # ============================================================
 
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -25,6 +26,22 @@ class Settings(BaseSettings):
     debug: bool = True
 
     model_config = {"env_file": "../.env", "extra": "ignore"}
+
+    @field_validator("anthropic_api_key")
+    @classmethod
+    def validate_api_key(cls, v: str, info) -> str:
+        """在非测试/开发环境下强制要求 API Key。"""
+        # 允许测试环境和开发环境跳过校验
+        app_env = info.data.get("app_env", "development")
+        if app_env in ("test", "testing"):
+            return v
+        if app_env == "development" and not v:
+            # 开发环境允许为空，但打印警告
+            print("⚠️  WARNING: ANTHROPIC_API_KEY not set, LLM features disabled")
+            return v
+        if not v:
+            raise ValueError("ANTHROPIC_API_KEY is required in production")
+        return v
 
 
 settings = Settings()
